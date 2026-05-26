@@ -1,0 +1,43 @@
+# =========================
+# Python & Environments
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+venv/
+env/
+
+# =========================
+# LeRobot, Data & ML Models
+# =========================
+outputs/
+data/
+datasets/
+*.mcap
+*.mp4
+*.avi
+*.mkv
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+.huggingface/
+
+# =========================
+# Logs & Caches
+# =========================
+*.log
+.cache/
+wandb/
+
+# =========================
+# IDEs, Editors & OS Files
+# =========================
+.vscode/
+.idea/
+*.swp
+*.save
+.DS_Store
