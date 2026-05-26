@@ -13,6 +13,7 @@ env/
 # =========================
 # LeRobot, Data & ML Models
 # =========================
+lerobot/
 outputs/
 data/
 datasets/
@@ -32,6 +33,7 @@ datasets/
 *.log
 .cache/
 wandb/
+sqdict.json
 
 # =========================
 # IDEs, Editors & OS Files
