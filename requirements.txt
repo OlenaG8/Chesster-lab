@@ -1,0 +1,6 @@
+chess==1.11.2
+opencv-python
+numpy
+python-chess
+Pillow
+cairosvg
