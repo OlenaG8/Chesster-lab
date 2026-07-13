@@ -33,7 +33,6 @@ datasets/
 *.log
 .cache/
 wandb/
-sqdict.json
 
 # =========================
 # IDEs, Editors & OS Files

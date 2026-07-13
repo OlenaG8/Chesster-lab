@@ -7,6 +7,25 @@ def generate_aruco(marker_id):
     marker_image = cv2.aruco.generateImageMarker(aruco_dict, marker_id, marker_size)
     cv2.imwrite(f'../aruco-markers/marker-{marker_id}.png', marker_image)
 
+def get_chessboard_state(sorted_corners):
+    src = np.array([[0, 0], [8, 0], [8, 8], [0, 8]], dtype=np.float32)
+    dst = np.array([c[0][0] for c in sorted_corners], dtype="float32")
+    H = cv2.getPerspectiveTransform(src, dst)
+
+    src_grid = np.array([[[x, y] for x in range(9)] for y in range(9)], dtype=np.float32)
+    dst_grid = cv2.perspectiveTransform(src_grid.reshape(-1, 1, 2), H).reshape(9, 9, 2)
+
+    chessboard_state = {}
+    for r in range(8):
+        for c in range(8):
+            tl = dst_grid[r, c].tolist()
+            tr = dst_grid[r, c + 1].tolist()
+            br = dst_grid[r + 1, c + 1].tolist()
+            bl = dst_grid[r + 1, c].tolist()
+            chessboard_state[(r, c)] = [tl, tr, br, bl]
+
+    return chessboard_state
+
 
 def draw_grid_in_perspective(frame, sorted_corners):
     size = 800
@@ -31,13 +50,18 @@ def draw_grid_in_perspective(frame, sorted_corners):
 
 def detect_aruco_live():
     cap = cv2.VideoCapture(3)
+    if not cap.isOpened():
+        print("❌ Cannot open camera.")
+        exit()
+
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
     parameters = cv2.aruco.DetectorParameters()
     detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
 
     while True:
         ret, frame = cap.read()
-        if not ret: break
+        if not ret:
+            break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         corners, ids, rejected = detector.detectMarkers(gray)
@@ -46,6 +70,7 @@ def detect_aruco_live():
             cv2.aruco.drawDetectedMarkers(frame, corners, ids)
             sorted_corners = [c for _, c in sorted(zip(ids.flatten(), corners))]
             draw_grid_in_perspective(frame, sorted_corners)
+            print(get_chessboard_state(sorted_corners))
 
         cv2.imshow('Podglad z kamery', frame)
 

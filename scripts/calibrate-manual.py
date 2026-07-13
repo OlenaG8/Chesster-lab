@@ -11,6 +11,7 @@ parser.add_argument("--rotate", type=int, default=0,
 args = parser.parse_args()
 CAM_ROT = args.rotate
 
+#te points to są nasze corners
 points = []
 
 def mouse_click(event, x, y, flags, param):
@@ -137,7 +138,7 @@ while True:
             rank_char = ranks[r_std]
             squares_std[f"{file_letter}{rank_char}"] = poly
 
-        with open('../sqdict.json', 'w') as f:
+        with open('sqdict.json', 'w') as f:
             json.dump(squares_std, f, indent=2)
         print(f"[✅] sqdict.json saved with {CAM_ROT}° orientation rotation (notation adjusted).")
         break
