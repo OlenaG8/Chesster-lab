@@ -9,6 +9,7 @@ import random
 import os
 import sys
 import cairosvg
+import time
 
 from detect_aruco import get_chessboard_state
 
@@ -19,6 +20,8 @@ MIN_CONTOUR_AREA = 250
 CAM_INDEX = 3
 BOARD_ORIENTATION = "TOP"
 
+MOTION_THRESHOLD = 500
+DELAY = 2
 DEBUG_MODE = False
 
 # === ENGINE ===
@@ -434,7 +437,11 @@ def toggle_debug():
 def main():
     global sq_points
     global DEBUG_MODE
-    # === CAMERA ===
+
+    is_moving = False
+    prev_gray = None
+    last_motion_time = time.time()
+
     cap = cv2.VideoCapture(CAM_INDEX)
     if not cap.isOpened():
         print("[ERROR] Cannot open camera.")
@@ -445,9 +452,10 @@ def main():
     ref_frame = None
     last_move = None
     comp_turn = False
+    engine_move = None
     move_history = []
 
-    print("[INFO] Press 'r' twice for a move, 'u'=undo, 'U'=undo 2 moves, 'd'=toggle debug, 'q'=quit.")
+    print("[INFO] Press 'u' to undo last move, 'U'=undo 2 moves, 'd'=toggle debug, 'q'=quit.")
     show_board(board)
 
     try:
@@ -467,22 +475,31 @@ def main():
 
             display = draw_board_labels(raw_frame.copy())
             cv2.imshow("Chess Tracker", display)
-            key = cv2.waitKey(1) & 0xFF
 
-            if key == ord('d'):
-                toggle_debug()
+            gray = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
-            if key == ord('r'):
-                if ref_frame is None:
-                    ref_frame = raw_frame.copy()
-                    print("[DEBUG] Initial frame saved.")
-                else:
-                    print("[DEBUG] Final frame recorded, processing...")
+            if prev_gray is None:
+                prev_gray = gray
+                ref_frame = raw_frame.copy()
+                continue
+
+            frame_delta = cv2.absdiff(prev_gray, gray)
+            thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
+            motion_level = cv2.countNonZero(thresh)
+
+            if motion_level > MOTION_THRESHOLD:
+                is_moving = True
+                last_motion_time = time.time()
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Motion detected: {motion_level}")
+            else:
+                if is_moving and (time.time() - last_motion_time) > DELAY:
+                    print(f"[INFO] Analyzing movement...")
 
                     contours_filtered = process_frame_diff(ref_frame, raw_frame)
                     detected, chosen_mapping = get_detected_squares(contours_filtered, board.copy())
 
-                    # debug print chosen candidates
                     if DEBUG_MODE:
                         print(f"[DEBUG] Contour candidates: {[len(c) for _, c in [(c, candidates_for_contour(c)) for c in contours_filtered]]}")
                         print(f"[DEBUG] Chosen mapping: {chosen_mapping}")
@@ -494,7 +511,8 @@ def main():
                                 poly = np.array(sq_points[sq], np.int32)
                                 cv2.polylines(dbg, [poly], True, (0, 255, 0), 2)
                                 cv2.circle(dbg, (int(cx), int(cy)), 4, (0, 0, 255), -1)
-                                cv2.putText(dbg, sq, (int(cx) + 6, int(cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                                cv2.putText(dbg, sq, (int(cx) + 6, int(cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                            (0, 255, 0), 1)
                             cv2.imshow("Contours", dbg)
 
                     print(f"[DEBUG] Detected squares: {detected}")
@@ -504,36 +522,40 @@ def main():
                     if not from_sq and not to_sq:
                         print("[WARN] Invalid detection.")
                     else:
-                        move = from_sq + to_sq
-                        try:
-                            mv = chess.Move.from_uci(move)
-                            if mv in board.legal_moves:
-                                board.push(mv)
-                                move_history.append(mv)
-                                last_move = mv
-                                print(f"[YOU] You played: {move}")
-                                show_board(board, last_move)
-
-                                # === HIGHLIGHT player's move (FROM green, TO red) ===
-                                try:
-                                    frame_high = overlay_poly(raw_frame.copy(), sq_points[from_sq], (0, 255, 0), 0.5)
-                                    frame_high = overlay_poly(frame_high, sq_points[to_sq], (0, 0, 255), 0.5)
-                                    frame_high = draw_board_labels(frame_high)
-                                    cv2.imshow("Chess Tracker", frame_high)
-                                    cv2.waitKey(700)  # show briefly
-                                except Exception as e:
-                                    if DEBUG_MODE:
-                                        print(f"[DEBUG] Failed to highlight player: {e}")
-
-                                comp_turn = True
+                        detected_move_uci = from_sq + to_sq
+                        if engine_move and not comp_turn:
+                            if detected_move_uci == engine_move.uci():
+                                print(f"[SYNC] AI move verified: {detected_move_uci}")
+                                board.push(engine_move)
+                                move_history.append(engine_move)
+                                engine_move = None
+                                show_board(board, engine_move)
+                                ref_frame = raw_frame.copy()
                             else:
-                                print(f"[!] Invalid move: {move}")
-                        except Exception as e:
-                            print(f"[!] Move interpretation error: {e}")
+                                print(f"[!] SYNC ERROR! Detected: {detected_move_uci}, Expected: {engine_move.uci()}.")
+                        else:
+                            try:
+                                mv = chess.Move.from_uci(detected_move_uci)
+                                if mv in board.legal_moves:
+                                    print(f"[YOU] You played: {detected_move_uci}")
+                                    board.push(mv)
+                                    move_history.append(mv)
+                                    show_board(board, mv)
+                                    ref_frame = raw_frame.copy()
+                                    comp_turn = True
+                                else:
+                                    print(f"[!] Invalid move: {detected_move_uci}")
+                            except Exception as e:
+                                print(f"[!] Move interpretation error: {e}")
 
-                    ref_frame = None
+                    is_moving = False
 
-            # === Undo 1 move ===
+            prev_gray = gray
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == ord('d'):
+                toggle_debug()
+
             if key == ord('u'):
                 if move_history:
                     mv = move_history.pop()
@@ -543,7 +565,6 @@ def main():
                 else:
                     print("[INFO] No moves to undo.")
 
-            # === Undo 2 moves ===
             if key == ord('U'):
                 if len(move_history) >= 2:
                     mv2 = move_history.pop()
@@ -555,21 +576,17 @@ def main():
                 else:
                     print("[INFO] Not enough moves to undo twice.")
 
-            # === COMPUTER TURN ===
-            if comp_turn:
+            if comp_turn and not engine_move:
                 result = engine.play(board, chess.engine.Limit(time=random.uniform(0.4, 0.9)))
-                mv = result.move
-                board.push(mv)
-                move_history.append(mv)
-                last_move = mv
-                print(f"[AI] Computer played: {mv.uci()}")
+                engine_move = result.move
+                last_move = engine_move
+                print(f"[AI] Computer played: {engine_move.uci()}")
                 show_board(board, last_move)
 
-                # === HIGHLIGHT AI move (FROM yellow, TO orange) ===
                 try:
-                    move_str = mv.uci()
-                    frame_ai = overlay_poly(raw_frame.copy(), sq_points[move_str[:2]], (0, 255, 255), 0.45)  # yellow
-                    frame_ai = overlay_poly(frame_ai, sq_points[move_str[2:]], (0, 165, 255), 0.45)  # orange-ish
+                    move_str = engine_move.uci()
+                    frame_ai = overlay_poly(raw_frame.copy(), sq_points[move_str[:2]], (0, 255, 255), 0.45)
+                    frame_ai = overlay_poly(frame_ai, sq_points[move_str[2:]], (0, 165, 255), 0.45)
                     frame_ai = draw_board_labels(frame_ai)
                     cv2.imshow("Chess Tracker", frame_ai)
                     cv2.waitKey(900)
