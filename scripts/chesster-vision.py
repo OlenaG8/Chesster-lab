@@ -11,20 +11,19 @@ import sys
 import cairosvg
 import time
 
-from detect_aruco import get_chessboard_state
+from detect_aruco import get_aruco_corners
+from camera_calibration.undistort import undistort_camera
 
-CALIB_JSON = "sqdict.json"
 ENGINE_PATH = r"/home/olena/Downloads/stockfish-ubuntu-x86-64/stockfish/stockfish-ubuntu-x86-64"
-MOVE_THRESHOLD = 25
+MOVE_THRESHOLD = 30
 MIN_CONTOUR_AREA = 250
-CAM_INDEX = 3
+CAM_INDEX = 4
 BOARD_ORIENTATION = "TOP"
 
 MOTION_THRESHOLD = 500
 DELAY = 2
 DEBUG_MODE = False
 
-# === ENGINE ===
 if not os.path.exists(ENGINE_PATH):
     print(f"[ERROR] Engine file not found: {ENGINE_PATH}")
     sys.exit(1)
@@ -32,23 +31,62 @@ if not os.path.exists(ENGINE_PATH):
 engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
 print(f"[INFO] Stockfish running from {ENGINE_PATH}")
 
-sq_points = {}
-"""
-# === LOAD JSON (for manual calibration) ===
-
-if not os.path.exists(CALIB_JSON):
-    print(f"[ERROR] Calibration file not found: {CALIB_JSON}")
-    engine.quit()
-    sys.exit(1)
-
-with open(CALIB_JSON, "r") as f:
-    sq_points = json.load(f)
-print(f"[INFO] Loaded {len(sq_points)} squares from {CALIB_JSON}")
-"""
-
-# === ORIENTATION ===
 files = 'abcdefgh'
 ranks = '12345678'
+
+
+def get_normalized_sq_points(size=400):
+    step = size // 8
+    sq_pts = {}
+    board_files = 'abcdefgh'
+    board_ranks = '87654321'
+    for r in range(8):
+        for c in range(8):
+            tl = [c * step, r * step]
+            tr = [(c + 1) * step, r * step]
+            br = [(c + 1) * step, (r + 1) * step]
+            bl = [c * step, (r + 1) * step]
+            sq_pts[f"{board_files[c]}{board_ranks[r]}"] = [tl, tr, br, bl]
+    return sq_pts
+
+
+# Logic points (normalized 400x400)
+sq_points = get_normalized_sq_points(400)
+
+def get_original_sq_points(corners):
+    src = np.array([[0, 0], [8, 0], [8, 8], [0, 8]], dtype="float32")
+    dst = np.array([c[0][0] for c in corners], dtype="float32")
+    H = cv2.getPerspectiveTransform(src, dst)
+
+    src_grid_list = []
+    for y in range(9):
+        row = []
+        for x in range(9):
+            row.append([x, y])
+        src_grid_list.append(row)
+
+    src_grid = np.array(src_grid_list, dtype=np.float32)
+    dst_grid = cv2.perspectiveTransform(src_grid.reshape(-1, 1, 2), H).reshape(9, 9, 2)
+
+    chessboard_state = {}
+    for r in range(8):
+        for c in range(8):
+            tl = dst_grid[r, c].tolist()
+            tr = dst_grid[r, c + 1].tolist()
+            br = dst_grid[r + 1, c + 1].tolist()
+            bl = dst_grid[r + 1, c].tolist()
+            chessboard_state[(r, c)] = [tl, tr, br, bl]
+
+    board_files = 'abcdefgh'
+    board_ranks = '87654321'
+    original_squares = {}
+    for (r_disp, c_disp), poly in chessboard_state.items():
+        r_std, c_std = r_disp, c_disp
+        file_letter = board_files[c_std]
+        rank_char = board_ranks[r_std]
+        original_squares[f"{file_letter}{rank_char}"] = poly
+    return original_squares
+
 
 def remap_square(square_name: str) -> str:
     f = square_name[0]
@@ -66,13 +104,14 @@ def remap_square(square_name: str) -> str:
     else:
         return square_name
 
-# === HELPERS ===
+
 def poly_center(pts):
     a = np.array(pts, np.int32)
     M = cv2.moments(a)
     if M["m00"] == 0:
         return int(a[:, 0].mean()), int(a[:, 1].mean())
     return int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
+
 
 def find_square(x, y):
     """Return square name if point (x,y) is inside the polygon for that square."""
@@ -84,16 +123,18 @@ def find_square(x, y):
             return sq
     return None
 
+
 def overlay_poly(frame, poly_pts, color, alpha=0.45):
     overlay = frame.copy()
     pts = np.array(poly_pts, np.int32)
     cv2.fillPoly(overlay, [pts], color)
     return cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
 
-def draw_board_labels(base_frame):
+
+def draw_board_labels(base_frame, pts_dict):
     overlay = base_frame.copy()
     font = cv2.FONT_HERSHEY_SIMPLEX
-    for sq, pts in sq_points.items():
+    for sq, pts in pts_dict.items():
         p = np.array(pts, np.int32)
         cv2.polylines(overlay, [p], True, (0, 255, 0), 2)
         if sq == "a1":
@@ -102,46 +143,6 @@ def draw_board_labels(base_frame):
             cv2.putText(overlay, mapped, (cx - 12, cy + 5), font, 0.45, (0, 255, 255), 1, cv2.LINE_AA)
     return overlay
 
-def pick_top_two_contours_by_square(contours, mask_board):
-    # Contour -> (square, contour, area, cx, cy)
-    items = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area <= MIN_CONTOUR_AREA:
-            continue
-
-        x, y, w, h = cv2.boundingRect(c)
-        M = cv2.moments(c)
-
-        # Bias: use center-top of the bounding box (top of the piece) — 35% of height
-        top_center_y = int(y + 0.35 * h)
-        bbox_center_x = int(x + w // 2)
-
-        if M["m00"] != 0:
-            cx_m = int(M["m10"] / M["m00"])
-            cy_m = int(M["m01"] / M["m00"])
-            # use centroid for X (more stable horizontally), and use top_center_y for Y
-            cx = cx_m
-            cy = top_center_y
-        else:
-            cx = bbox_center_x
-            cy = top_center_y
-
-        sq = find_square(cx, cy)
-        if sq:
-            items.append((sq, c, area, cx, cy))
-
-    by_sq = {}
-    for sq, c, area, cx, cy in items:
-        if sq not in by_sq or area > by_sq[sq][0]:
-            by_sq[sq] = (area, c, cx, cy)
-
-    # sort squares by area desc, return up to 2 contours (contour objects)
-    sorted_sq = sorted(by_sq.items(), key=lambda kv: kv[1][0], reverse=True)
-    contours_out = []
-    for sq, (area, c, cx, cy) in sorted_sq[:2]:
-        contours_out.append((c, cx, cy))  # return tuple (contour, cx, cy)
-    return contours_out
 
 def show_board(board, last_move=None):
     svg = chess.svg.board(board=board, lastmove=last_move, coordinates=True, size=450)
@@ -151,23 +152,18 @@ def show_board(board, last_move=None):
     cv2.imshow("Board State", img_cv)
     cv2.waitKey(1)
 
-def draw_contours_debug(frame, contours):
-    dbg = frame.copy()
-    for i, c in enumerate(contours):
-        area = cv2.contourArea(c)
-        x, y, w, h = cv2.boundingRect(c)
-        M = cv2.moments(c)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-        else:
-            cx, cy = x + w // 2, y + h // 2
 
-        cv2.rectangle(dbg, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.circle(dbg, (cx, cy), 3, (0, 0, 255), -1)
-        cv2.putText(dbg, f"A:{int(area)}", (x, y - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    return dbg
+def get_normalized_view(frame, corners, size=400):
+    src = np.array([c[0][0] for c in corners], dtype="float32")
+    dst = np.array([
+        [0, 0],
+        [size, 0],
+        [size, size],
+        [0, size]
+    ], dtype="float32")
+    H = cv2.getPerspectiveTransform(src, dst)
+    return cv2.warpPerspective(frame, H, (size, size))
+
 
 def process_frame_diff(ref_frame, frame_raw):
     g1 = 0.5 * ref_frame[:, :, 2] + 0.4 * ref_frame[:, :, 1] + 0.1 * ref_frame[:, :, 0]
@@ -179,12 +175,11 @@ def process_frame_diff(ref_frame, frame_raw):
     g2 = cv2.GaussianBlur(g2, (5, 5), 0)
     diff = cv2.absdiff(g1, g2)
     diff = cv2.GaussianBlur(diff, (3, 3), 0)
-    diff = cv2.convertScaleAbs(diff, alpha=1.3, beta=0)  # enhance difference contrast
+    diff = cv2.convertScaleAbs(diff, alpha=1.3, beta=0)
     _, diff_thresh = cv2.threshold(diff, MOVE_THRESHOLD, 255, cv2.THRESH_BINARY)
     diff_m = cv2.dilate(diff_thresh, None, iterations=4)
     diff_m = cv2.erode(diff_m, None, iterations=2)
 
-    # === Limit detection area only to the chessboard ===
     mask_board = np.zeros_like(diff_m)
     for pts in sq_points.values():
         cv2.fillPoly(mask_board, [np.array(pts, np.int32)], 255)
@@ -197,114 +192,40 @@ def process_frame_diff(ref_frame, frame_raw):
     diff_m = cv2.morphologyEx(diff_m, cv2.MORPH_OPEN, kernel)
     diff_m = cv2.morphologyEx(diff_m, cv2.MORPH_CLOSE, kernel)
 
-    contours, _ = cv2.findContours(diff_m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    params = cv2.SimpleBlobDetector_Params()
+    params.filterByColor = True
+    params.blobColor = 255
+    params.filterByArea = True
+    params.minArea = MIN_CONTOUR_AREA
 
-    # get candidates from contour (contour, and bounding)
-    contours_filtered = [c for c in contours if cv2.contourArea(c) > MIN_CONTOUR_AREA]
-    return contours_filtered
+    params.filterByCircularity = True
+    params.minCircularity = 0.65
+
+    params.filterByConvexity = True
+    params.minConvexity = 0.7
+
+    params.filterByInertia = True
+    params.minInertiaRatio = 0.4
+
+    detector = cv2.SimpleBlobDetector_create(params)
+    keypoints = detector.detect(diff_m)
+
+    return keypoints
 
 
-def candidates_for_contour(c):
-    x, y, w, h = cv2.boundingRect(c)
-    M = cv2.moments(c)
-    if M["m00"] != 0:
-        cx_m = int(M["m10"] / M["m00"])
-        cy_m = int(M["m01"] / M["m00"])
-    else:
-        cx_m = x + w // 2
-        cy_m = y + h // 2
-
-    # try some vertical bias and a little horizontal jitter
-    y_factors = [0.20, 0.30, 0.40]  # 20%.40% from top of bounding box
-    x_jitters = [0, -6, 6]  # small left/right shift
-    cands = []
-    for yf in y_factors:
-        cy_try = int(y + yf * h)
-        for xj in x_jitters:
-            cx_try = cx_m + xj
-            sq_try = find_square(cx_try, cy_try)
-            if sq_try:
-                cands.append((sq_try, cx_try, cy_try))
-    # dedup while keeping order
-    seen = set()
-    out = []
-    for s in cands:
-        if s[0] not in seen:
-            seen.add(s[0]);
-            out.append(s)
-    return out
-
-def get_detected_squares(contours_filtered, prev_board):
-    # build candidate lists for each detected contour
-    contour_cand_lists = [(c, candidates_for_contour(c)) for c in contours_filtered]
-
-    # if no contours -> skip
+def get_detected_squares(keypoints):
     detected = set()
-    chosen_mapping = []  # will store chosen (sq, cx, cy)
+    chosen_mapping = []
 
-    # if we have two or more contours, try combinations (prefer 2 largest)
-    if len(contour_cand_lists) >= 2:
-        # sort contours by contour area descending and keep top 2
-        contour_cand_lists = sorted(contour_cand_lists,
-                                    key=lambda it: cv2.contourArea(it[0]),
-                                    reverse=True)[:2]
-
-        (c0, list0), (c1, list1) = contour_cand_lists
-
-        found = False
-        # try all combinations of candidate squares for the two contours
-        for s0, cx0, cy0 in list0:
-            for s1, cx1, cy1 in list1:
-                # two possible orderings: s0->s1 or s1->s0
-                try_moves = [(s0, s1), (s1, s0)]
-                for fr, to in try_moves:
-                    try:
-                        mv = chess.Move.from_uci(fr + to)
-                    except Exception:
-                        continue
-                    # check legality on prev_board snapshot
-                    if mv in prev_board.legal_moves:
-                        # accept this mapping
-                        detected = {fr, to}
-                        chosen_mapping = [(fr, cx0, cy0) if fr == s0 else (fr, cx1, cy1),
-                                          (to, cx1, cy1) if to == s1 else (to, cx0, cy0)]
-                        found = True
-                        break
-                if found:
-                    break
-            if found:
-                break
-
-        # fallback: if not found any legal move using candidates, use previous simple logic:
-        if not found:
-            # default: map using the first candidate of each contour (if exists)
-            if list0 and list1:
-                s0 = list0[0][0]
-                s1 = list1[0][0]
-                detected = {s0, s1}
-                chosen_mapping = [(s0, list0[0][1], list0[0][2]), (s1, list1[0][1], list1[0][2])]
-
-    elif len(contour_cand_lists) == 1:
-        # only one contour (likely capture or single detection) -> take best candidate
-        c0, list0 = contour_cand_lists[0]
-        if list0:
-            # choose first that matches any legal move destination
-            # prefer candidate that matches legal moves' destination
-            dest_chosen = None
-            for sq_try, cx_try, cy_try in list0:
-                # is there a legal move ending at sq_try?
-                candidates = [m for m in prev_board.legal_moves if m.uci()[2:] == sq_try]
-                if candidates:
-                    dest_chosen = (sq_try, cx_try, cy_try)
-                    break
-            if dest_chosen:
-                detected = {dest_chosen[0]}
-                chosen_mapping = [dest_chosen]
-            else:
-                detected = {list0[0][0]}
-                chosen_mapping = [list0[0]]
+    for kp in keypoints:
+        x, y = kp.pt
+        sq = find_square(x, y)
+        if sq:
+            detected.add(sq)
+            chosen_mapping.append((sq, x, y))
 
     return detected, chosen_mapping
+
 
 def interpret_move(detected, board):
     # === move interpretation ===
@@ -324,6 +245,7 @@ def interpret_move(detected, board):
             from_sq, to_sq = a, b
         elif piece_b and not piece_a:
             from_sq, to_sq = b, a
+            from_sq, to_sq = b, a
         else:
             # If both are empty or both are occupied (difficult), use rank direction heuristic
             def rank_idx(s):
@@ -337,7 +259,7 @@ def interpret_move(detected, board):
     elif len(detected) == 1:
         # only one square changed — try a more reliable way to find from_sq
         to_sq = list(detected)[0]
-        prev_board = board.copy()  # snapshot of position before move
+        prev_board = board.copy()
         piece_now = board.piece_at(chess.parse_square(to_sq))
 
         # 1) If the current square is occupied, try to find a legal move ending here
@@ -415,6 +337,7 @@ def interpret_move(detected, board):
                         break
     return from_sq, to_sq
 
+
 def toggle_debug():
     global DEBUG_MODE
     DEBUG_MODE = not DEBUG_MODE
@@ -427,26 +350,29 @@ def toggle_debug():
                 cv2.destroyWindow("Diff")
         except cv2.error:
             pass
-
         try:
             if cv2.getWindowProperty("Contours", cv2.WND_PROP_VISIBLE) >= 0:
                 cv2.destroyWindow("Contours")
         except cv2.error:
             pass
 
+
 def main():
-    global sq_points
     global DEBUG_MODE
 
     is_moving = False
     prev_gray = None
     last_motion_time = time.time()
 
+    display_sq_points = {}
+
     cap = cv2.VideoCapture(CAM_INDEX)
     if not cap.isOpened():
         print("[ERROR] Cannot open camera.")
         engine.quit()
         sys.exit(1)
+
+    map1, map2 = undistort_camera(CAM_INDEX)
 
     board = chess.Board()
     ref_frame = None
@@ -464,24 +390,36 @@ def main():
             if not ret:
                 continue
 
-            new_sq_points = get_chessboard_state(raw_frame)
-            if new_sq_points is not None:
-                sq_points = new_sq_points
-            elif not sq_points:
-                cv2.imshow("Chess Tracker", raw_frame)
+            undistorted_frame = cv2.remap(raw_frame, map1, map2, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+            corners, ids = get_aruco_corners(undistorted_frame)
+
+            if corners is None or len(corners) != 4:
+                if not display_sq_points:
+                    cv2.imshow("Chess Tracker", undistorted_frame)
+                else:
+                    display = draw_board_labels(undistorted_frame.copy(), display_sq_points)
+                    cv2.imshow("Chess Tracker", display)
+
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
                 continue
 
-            display = draw_board_labels(raw_frame.copy())
+            # Update coordinates dynamically for visual drawing on original frame
+            display_sq_points = get_original_sq_points(corners)
+
+            # Map the board to standard 400x400 for logic and motion
+            norm_frame = get_normalized_view(undistorted_frame, corners, size=400)
+
+            # Draw labels on the raw frame using display_sq_points
+            display = draw_board_labels(undistorted_frame.copy(), display_sq_points)
             cv2.imshow("Chess Tracker", display)
 
-            gray = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(norm_frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
             if prev_gray is None:
                 prev_gray = gray
-                ref_frame = raw_frame.copy()
+                ref_frame = norm_frame.copy()
                 continue
 
             frame_delta = cv2.absdiff(prev_gray, gray)
@@ -491,35 +429,32 @@ def main():
             if motion_level > MOTION_THRESHOLD:
                 is_moving = True
                 last_motion_time = time.time()
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Motion detected: {motion_level}")
             else:
                 if is_moving and (time.time() - last_motion_time) > DELAY:
                     print(f"[INFO] Analyzing movement...")
 
-                    contours_filtered = process_frame_diff(ref_frame, raw_frame)
-                    detected, chosen_mapping = get_detected_squares(contours_filtered, board.copy())
+                    keypoints = process_frame_diff(ref_frame, norm_frame)
+                    detected, chosen_mapping = get_detected_squares(keypoints)
 
                     if DEBUG_MODE:
-                        print(f"[DEBUG] Contour candidates: {[len(c) for _, c in [(c, candidates_for_contour(c)) for c in contours_filtered]]}")
                         print(f"[DEBUG] Chosen mapping: {chosen_mapping}")
                         print(f"[DEBUG] Detected squares: {detected}")
 
                         if chosen_mapping:
-                            dbg = raw_frame.copy()
+                            dbg = norm_frame.copy()
                             for sq, cx, cy in chosen_mapping:
                                 poly = np.array(sq_points[sq], np.int32)
                                 cv2.polylines(dbg, [poly], True, (0, 255, 0), 2)
                                 cv2.circle(dbg, (int(cx), int(cy)), 4, (0, 0, 255), -1)
-                                cv2.putText(dbg, sq, (int(cx) + 6, int(cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                                            (0, 255, 0), 1)
+                                cv2.putText(dbg, sq, (int(cx) + 6, int(cy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0),
+                                            1)
                             cv2.imshow("Contours", dbg)
 
                     print(f"[DEBUG] Detected squares: {detected}")
 
                     from_sq, to_sq = interpret_move(detected, board)
 
-                    if not from_sq and not to_sq:
+                    if not from_sq or not to_sq:
                         print("[WARN] Invalid detection.")
                     else:
                         detected_move_uci = from_sq + to_sq
@@ -530,7 +465,7 @@ def main():
                                 move_history.append(engine_move)
                                 engine_move = None
                                 show_board(board, engine_move)
-                                ref_frame = raw_frame.copy()
+                                ref_frame = norm_frame.copy()
                             else:
                                 print(f"[!] SYNC ERROR! Detected: {detected_move_uci}, Expected: {engine_move.uci()}.")
                         else:
@@ -541,7 +476,17 @@ def main():
                                     board.push(mv)
                                     move_history.append(mv)
                                     show_board(board, mv)
-                                    ref_frame = raw_frame.copy()
+
+                                    if display_sq_points:
+                                        frame_high = overlay_poly(undistorted_frame.copy(), display_sq_points[from_sq],
+                                                                  (0, 255, 0), 0.5)
+                                        frame_high = overlay_poly(frame_high, display_sq_points[to_sq], (0, 0, 255),
+                                                                  0.5)
+                                        frame_high = draw_board_labels(frame_high, display_sq_points)
+                                        cv2.imshow("Chess Tracker", frame_high)
+                                        cv2.waitKey(700)
+
+                                    ref_frame = norm_frame.copy()
                                     comp_turn = True
                                 else:
                                     print(f"[!] Invalid move: {detected_move_uci}")
@@ -562,6 +507,9 @@ def main():
                     board.pop()
                     print(f"[UNDO] Removing last move: {mv}")
                     show_board(board)
+                    ref_frame = norm_frame.copy()
+                    engine_move = None
+                    comp_turn = False
                 else:
                     print("[INFO] No moves to undo.")
 
@@ -573,6 +521,9 @@ def main():
                     board.pop()
                     print(f"[UNDO] Removing last 2 moves: {mv1}, {mv2}")
                     show_board(board)
+                    ref_frame = norm_frame.copy()
+                    engine_move = None
+                    comp_turn = False
                 else:
                     print("[INFO] Not enough moves to undo twice.")
 
@@ -585,11 +536,12 @@ def main():
 
                 try:
                     move_str = engine_move.uci()
-                    frame_ai = overlay_poly(raw_frame.copy(), sq_points[move_str[:2]], (0, 255, 255), 0.45)
-                    frame_ai = overlay_poly(frame_ai, sq_points[move_str[2:]], (0, 165, 255), 0.45)
-                    frame_ai = draw_board_labels(frame_ai)
-                    cv2.imshow("Chess Tracker", frame_ai)
-                    cv2.waitKey(900)
+                    if display_sq_points:
+                        frame_ai = overlay_poly(undistorted_frame.copy(), display_sq_points[move_str[:2]], (0, 255, 255), 0.45)
+                        frame_ai = overlay_poly(frame_ai, display_sq_points[move_str[2:]], (0, 165, 255), 0.45)
+                        frame_ai = draw_board_labels(frame_ai, display_sq_points)
+                        cv2.imshow("Chess Tracker", frame_ai)
+                        cv2.waitKey(900)
                 except Exception as e:
                     if DEBUG_MODE:
                         print(f"[DEBUG] Failed to highlight AI: {e}")
@@ -605,6 +557,7 @@ def main():
         cap.release()
         cv2.destroyAllWindows()
         engine.quit()
+
 
 if __name__ == '__main__':
     main()
