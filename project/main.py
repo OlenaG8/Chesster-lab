@@ -1,14 +1,10 @@
 """
-Step 1 - Initialization:
-- configure camera
-- calibrate camera
-
-Step 2 - Get Frame and undistort (undistort.py)
+Step 1 - Get Frame and undistort (undistort.py)
 while game is running:
     frame <- camera.read()
     undistort(frame)
 
-Step 3 - detect AruCo markers (detect_aruco.py)
+Step 2 - detect AruCo markers (detect_aruco.py)
 ID0 -------- ID1
 |              |
 |  Chessboard  |
@@ -19,7 +15,7 @@ corners <- detector.detect(undistorted_frame)
 if ids.count < 4:
     continue
 
-Step 4 - straightening the board
+Step 3 - straightening the board
 H <- find_homography(detected_corners, destination_corners)
 topView <- warpPerspective(frame, H)
 + ---------- +
@@ -29,18 +25,18 @@ topView <- warpPerspective(frame, H)
 | a1, b1 ... |
 + ---------- +
 
-Step 5 - Divide the board to get 64 images
+Step 4 - Divide the board to get 64 images
 
-Step 6 - piece recognition (ChessCNN)
+Step 5 - piece recognition (ChessCNN)
     for every square:
         class <- CNN.predict(square)
         board[row][col] <- class
 
-Step 7 - FEN + move verification
+Step 6 - FEN + move verification
 
-Step 8 - get the best move(Stockfish Engine)
+Step 7 - get the best move(Stockfish Engine)
 
-Step 9 - send the move to the robot and then verify (SO-ARM101)
+Step 8 - send the move to the robot and then verify (SO-ARM101)
 """
 
 from config import *
