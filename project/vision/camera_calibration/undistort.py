@@ -8,7 +8,7 @@ D1 = np.array([[-0.4467195274935519, 0.261307133907364, 0.0016875833637850534, 0
 K2 = np.array([[551.1560029404905, 0.0, 360.8064089147551], [0.0, 552.0301499038216, 265.9019319371812], [0.0, 0.0, 1.0]])
 D2 = np.array([[-0.4483986817696431, 0.2684104960562383, 2.3284080912077103e-05, 5.902916735538078e-05, -0.10662990298229139]])
 
-def undistort_camera(cam_index):
+def getDistortionMaps(cam_index):
     if cam_index == 3:
         map1, map2 = cv2.initUndistortRectifyMap(K1, D1, np.eye(3), K1, DIM, cv2.CV_16SC2)
     elif cam_index == 4:
@@ -29,8 +29,8 @@ def main():
 
         undistorted_frame = cv2.remap(frame, map1, map2, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
-        cv2.imshow("Kamera - oryginal", frame)
-        cv2.imshow("Kamera - undistorted", undistorted_frame)
+        cv2.imshow("Camera - original", frame)
+        cv2.imshow("Camera - undistorted", undistorted_frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
