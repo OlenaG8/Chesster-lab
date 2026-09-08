@@ -38,33 +38,32 @@ Step 7 - get the best move(Stockfish Engine)
 
 Step 8 - send the move to the robot and then verify (SO-ARM101)
 """
+import cv2
 
 from config import *
 
 from vision.detect_aruco import ArucoDetector
 from vision.homography import warp_board
-from vision.board_detector import split_board
-from vision.cnn_classifier import ChessCNN
+from vision.board_detector import split_board, CLASS_MAP
+from vision.cnn_classifier import ChessCNNClassifier
 
 from chess_engine.stockfish import Stockfish
 from chess_engine.board_state import BoardState
 from chess_engine.fen import board_to_fen
 
-from vision.camera_calibration.undistort import undistort_camera
+from vision.camera_calibration.undistort import getDistortionMaps
 from vision.camera import Camera
 
 
 def main():
-    map1,map2 = (undistort_camera(CAM_INDEX))
+    map1, map2 = getDistortionMaps(CAM_INDEX)
     camera = Camera(CAM_INDEX, map1, map2)
-    aruco = ArucoDetector()
 
-    #cnn = ChessCNN(CNN_MODEL_PATH)
-    cnn = None
+    aruco = ArucoDetector()
+    cnn = ChessCNNClassifier(CNN_MODEL_PATH)
 
     chess_board = BoardState()
     stockfish = Stockfish(ENGINE_PATH)
-
 
     while True:
         frame = camera.read()
@@ -72,29 +71,37 @@ def main():
         if frame is None:
             continue
 
-        corners = aruco.detect(frame)
+        corners, ids = aruco.detect(frame)
 
         if corners is None:
             continue
 
         board_img = warp_board(frame, corners)
+        cv2.imshow("Preview", board_img)
 
         squares = split_board(board_img)
+        state = []
 
-        state=[]
-        #for sq,img in squares.items():
-            #cls = cnn.predict(img)
-            #state.append(cls)
+        for sq, img in squares.items():
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            cls = cnn.predict(img)
 
+            state.append(cls)
 
-        # fen = board_to_fen(state)
-        #
-        # chess_board.update_fen(fen)
+        fen = board_to_fen(state)
+
+        chess_board.update_fen(fen)
+        #chess_board.show_board()
+        chess_board.display()
 
         move = stockfish.get_move(chess_board.board)
-
         print("Stockfish:", move)
 
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    camera.cap.release()
+    cv2.destroyAllWindows()
 
 
 if __name__=="__main__":
