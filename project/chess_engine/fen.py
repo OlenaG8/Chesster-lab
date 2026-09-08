@@ -1,32 +1,31 @@
 PIECES = {
-0:"",
-
-1:"P",
-2:"N",
-3:"B",
-4:"R",
-5:"Q",
-6:"K",
-
-7:"p",
-8:"n",
-9:"b",
-10:"r",
-11:"q",
-12:"k"
+    0: "b",       # black_bishop
+    1: "k",       # black_king
+    2: "n",       # black_knight
+    3: "p",       # black_pawn
+    4: "q",       # black_queen
+    5: "r",       # black_rook
+    6: "EMPTY",   # empty
+    7: "B",       # white_bishop
+    8: "K",       # white_king
+    9: "N",       # white_knight
+    10: "P",      # white_pawn
+    11: "Q",      # white_queen
+    12: "R",      # white_rook
 }
 
 
 def board_to_fen(board):
-    rows=[]
+    rows = []
 
     for r in range(8):
         empty = 0
         row = ""
+
         for c in range(8):
             piece = board[r * 8 + c]
 
-            if piece == 0:
+            if piece == 6:
                 empty += 1
             else:
                 if empty:
