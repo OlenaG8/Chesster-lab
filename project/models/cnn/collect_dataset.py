@@ -5,11 +5,12 @@ import numpy as np
 
 from project.config import *
 
+from torchvision import datasets, transforms
 from project.vision.detect_aruco import ArucoDetector
 from project.vision.homography import warp_board
 from project.vision.board_detector import split_board
 
-from project.vision.camera_calibration.undistort import undistort_camera
+from project.vision.camera_calibration.undistort import getDistortionMaps
 from project.vision.camera import Camera
 
 FILES = 'abcdefgh'
@@ -23,19 +24,30 @@ PIECE_INDEX = 0 # piece index from PIECES dict
 CURR_INDEX = 36 # the current index in the dataset
 
 PIECES = [
-    "white_pawn",
-    "white_knight",
-    "white_bishop",
-    "white_rook",
-    "white_queen",
-    "white_king",
-    "black_pawn",
-    "black_knight",
     "black_bishop",
-    "black_rook",
-    "black_queen",
     "black_king",
+    "black_knight",
+    "black_pawn",
+    "black_queen",
+    "black_rook",
+    "empty",
+    "white_bishop",
+    "white_king",
+    "white_knight",
+    "white_pawn",
+    "white_queen",
+    "white_rook",
 ]
+
+
+
+def get_dataset(dataset_path):
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
+    dataset = datasets.ImageFolder(root=dataset_path, transform=transform)
+    return dataset
 
 def get_random_square():
     return random.choice(FILES) + random.choice(RANKS)
@@ -95,7 +107,7 @@ def add_info_panel(board_img, piece, square, counter, target):
 
 
 if __name__ == '__main__':
-    map1, map2 = undistort_camera(CAM_INDEX)
+    map1, map2 = getDistortionMaps(CAM_INDEX)
     camera = Camera(CAM_INDEX, map1, map2)
 
     aruco = ArucoDetector()
