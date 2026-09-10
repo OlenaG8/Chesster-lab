@@ -43,8 +43,12 @@ PIECES = [
 
 def get_dataset(dataset_path):
     transform = transforms.Compose([
+        transforms.Resize((64, 64)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        transforms.Normalize(
+            mean=[0.5, 0.5, 0.5],
+            std=[0.5, 0.5, 0.5]
+        )
     ])
     dataset = datasets.ImageFolder(root=dataset_path, transform=transform)
     return dataset
