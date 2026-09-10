@@ -4,8 +4,12 @@ from torch.utils.data import DataLoader, random_split
 from collect_dataset import get_dataset
 from model import ChessCNN
 
-dataset = get_dataset("./dataset/raw")
-print(dataset.class_to_idx)
+#dataset = get_dataset("./dataset/raw")                  # CNN - V1
+#dataset = get_dataset("./dataset/backgrounds_separated") # CNN - V2
+#dataset = get_dataset("./dataset/binary")               # CNN - V3
+dataset = get_dataset("./dataset/6-classes")             # CNN - V4
+
+print("Classes:", dataset.class_to_idx)
 
 train_size = int(0.8 * len(dataset))
 val_size = len(dataset) - train_size
@@ -72,6 +76,6 @@ for epoch in range(30):
     if val_acc > best_val_acc:
         best_val_acc = val_acc
 
-        torch.save(model.state_dict(), "chess_piece_cnn.pt")
+        torch.save(model.state_dict(),"chess_piece_cnn_v4.pt")
 
         print("Saved best model!")
