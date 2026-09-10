@@ -43,7 +43,7 @@ class ChessCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3),
 
-            nn.Linear(128, 13)
+            nn.Linear(128, 6) #CNN - V4
         )
 
     def forward(self,x):
