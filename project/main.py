@@ -47,7 +47,7 @@ from vision.board_detector import split_board, CLASS_MAP
 from vision.cnn_classifier import ChessCNNClassifier
 from chess_engine.stockfish import Stockfish
 from chess_engine.board_state import BoardState
-from chess_engine.fen import board_to_fen, update_board
+from chess_engine.fen import board_to_fen
 from vision.camera_calibration.undistort import getDistortionMaps
 from vision.camera import Camera
 
@@ -61,12 +61,12 @@ def main():
     camera = Camera(CAM_INDEX, map1, map2)
     aruco = ArucoDetector()
     cnn = ChessCNNClassifier(CNN_MODEL_PATH)
-    chess_board = BoardState()
+    chess_board = BoardState(init_state=True)
     stockfish = Stockfish(ENGINE_PATH)
 
     bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=50, varThreshold=25, detectShadows=False)
 
-    print("[INFO] Press 'u' to undo last move, 'U' = undo 2 moves, 'q' = quit")
+    print("[INFO] Press 'q' = quit")
 
     cached_corners = None
 
@@ -87,8 +87,10 @@ def main():
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
+            cv2.imshow("Preview", frame)
+
             board_img = warp_board(frame, cached_corners)
-            cv2.imshow("Preview", board_img)
+            cv2.imshow("Chessboard", board_img)
             chess_board.show_board()
 
             fg_mask = bg_subtractor.apply(board_img)
@@ -107,19 +109,12 @@ def main():
                     for sq, img in squares.items():
                         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                         cls = cnn.predict(img)
-                        cnn_state.append(cls)
-
-                    #old_fen = board_to_fen(old_board_state)
-                    #new_state = update_board(old_board_state, cnn_state)
-                    print(cnn_state)
-                    fen = board_to_fen(cnn_state)
+                        cnn_state.append(cls//2)
 
                     try:
-                        chess_board.update_fen(fen)
+                        chess_board.apply_map(cnn_state)
                         if chess_board.board.is_valid():
-                            print("ok")
-                            # old_board_state = new_state
-                            # comp_turn = True
+                            comp_turn = True
                         else:
                             print("[ERROR] Invalid board position.")
                     except ValueError:
