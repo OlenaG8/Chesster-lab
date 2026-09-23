@@ -24,6 +24,12 @@ class BoardState:
                                     10, 10, 10, 10, 10, 10, 10, 10,
                                     12,  9,  7, 11,  8,  7,  9, 12]
 
+    def copy(self):
+        new_state = BoardState()
+        new_state.board = self.board.copy()
+        new_state.state = self.state.copy()
+        return new_state
+
     def apply_map(self, map):
         result = self.state.copy()
 
@@ -66,8 +72,12 @@ class BoardState:
                     raise Exception("Incorrect move.")
 
         if len(disappeared) != len(appeared):
+            print("[DEBUG] disappeared:", disappeared)
+            print("[DEBUG] appeared:", appeared)
             raise Exception("Mismatch between disappeared and appeared.")
         elif len(disappeared) > 2 or len(appeared) > 2:
+            print("[DEBUG] disappeared:", disappeared)
+            print("[DEBUG] appeared:", appeared)
             raise Exception("Too many changes.")
 
         if len(disappeared) == 2 and len(appeared) == 2:
@@ -77,6 +87,8 @@ class BoardState:
                 (disappeared == [(60, 8), (63, 12)] and appeared == [61, 62])):
                 disappeared.reverse()
             else:
+                print("[DEBUG] disappeared:", disappeared)
+                print("[DEBUG] appeared:", appeared)
                 raise Exception("Too many changes.")
 
         # Remove pieces that disappeared.
@@ -136,3 +148,26 @@ class BoardState:
 
     def display(self):
         print(self.board.unicode())
+
+    def check_game_over(self):
+        if self.board.is_checkmate():
+            winner = not self.board.turn
+
+            if winner == chess.WHITE:
+                return True, "1-0", "White wins by checkmate."
+            else:
+                return True, "0-1", "Black wins by checkmate."
+
+        if self.board.is_stalemate():
+            return True, "1/2-1/2", "Draw by stalemate."
+
+        if self.board.is_insufficient_material():
+            return True, "1/2-1/2", "Draw by insufficient material."
+
+        if self.board.is_fivefold_repetition():
+            return True, "1/2-1/2", "Draw by fivefold repetition."
+
+        if self.board.is_seventyfive_moves():
+            return True, "1/2-1/2", "Draw by 75-move rule."
+
+        return False, None, None
