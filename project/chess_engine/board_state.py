@@ -6,6 +6,7 @@ import chess.svg
 import cv2
 import numpy as np
 from PIL import Image
+from chess import WHITE
 
 from project.chess_engine.fen import board_to_fen
 
@@ -13,6 +14,7 @@ from project.chess_engine.fen import board_to_fen
 class BoardState:
     def __init__(self, init_state=None):
         self.board = chess.Board()
+        self.board.turn = chess.WHITE
         self.state = init_state or [ 5,  2,  0,  4,  1,  0,  2,  5,
                                      3,  3,  3,  3,  3,  3,  3,  3,
                                      6,  6,  6,  6,  6,  6,  6,  6,
@@ -41,6 +43,9 @@ class BoardState:
                 appeared.append(i) # a piece is captured
             elif not old_occupied and new_occupied:
                 appeared.append(i)   # A piece appeared on this square.
+
+        if len(disappeared) == 0 and len(appeared) == 0:
+            return
 
         if len(disappeared) == 2 and len(appeared) == 1:
                 if appeared[0] in range(16, 24) and disappeared[0][0] in range(24, 32):
@@ -85,15 +90,41 @@ class BoardState:
         self.update_fen(board_to_fen(self.state))
 
     def update_fen(self, fen):
+        next_turn = not self.board.turn
         self.board = chess.Board(fen)
+        self.board.turn = next_turn
 
     def legal_move(self, uci):
         move = chess.Move.from_uci(uci)
         return move in self.board.legal_moves
 
-    def push(self, uci):
-        move = chess.Move.from_uci(uci)
+    def push(self, move):
+        #move = chess.Move.from_uci(uci)
         self.board.push(move)
+        self.sync_state_from_board()
+
+    def sync_state_from_board(self):
+        piece_map = {
+            (chess.BISHOP, chess.BLACK): 0,
+            (chess.KING, chess.BLACK): 1,
+            (chess.KNIGHT, chess.BLACK): 2,
+            (chess.PAWN, chess.BLACK): 3,
+            (chess.QUEEN, chess.BLACK): 4,
+            (chess.ROOK, chess.BLACK): 5,
+            (chess.BISHOP, chess.WHITE): 7,
+            (chess.KING, chess.WHITE): 8,
+            (chess.KNIGHT, chess.WHITE): 9,
+            (chess.PAWN, chess.WHITE): 10,
+            (chess.QUEEN, chess.WHITE): 11,
+            (chess.ROOK, chess.WHITE): 12,
+        }
+        new_state = [6] * 64
+        for i in range(64):
+            sq = chess.square(i % 8, 7 - (i // 8))
+            piece = self.board.piece_at(sq)
+            if piece:
+                new_state[i] = piece_map[(piece.piece_type, piece.color)]
+        self.state = new_state
 
     def show_board(self, last_move=None):
         svg = chess.svg.board(self.board, lastmove=last_move, coordinates=True, size=450)
