@@ -6,7 +6,7 @@ class Camera:
 
         if not self.cap.isOpened():
             raise RuntimeError("Cannot open camera")
-
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.index = index
         self.map1 = map1
         self.map2 = map2
