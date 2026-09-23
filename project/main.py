@@ -52,7 +52,43 @@ from chess_engine.board_state import BoardState
 from vision.camera_calibration.undistort import getDistortionMaps
 from vision.camera import Camera
 
-MAX_CACHED_FRAMES = 30
+
+def read_board_from_camera(camera, aruco, cnn, chess_board):
+    frame = camera.read()
+
+    if frame is None:
+        raise RuntimeError("Could not read frame from camera.")
+
+    corners, ids = aruco.detect(frame)
+
+    if corners is None or len(corners) < 4:
+        raise RuntimeError("[WARN] Could not detect ArUco markers.")
+
+    board_img = warp_board(frame, corners)
+
+    squares = split_board(board_img)
+
+    cnn_state = []
+
+    for sq, img in squares.items():
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        cls = cnn.predict(img)
+        cnn_state.append(cls // 2)
+
+    print("[CNN]", cnn_state)
+
+    test_board = chess_board.copy()
+
+    try:
+        test_board.apply_map(cnn_state)
+    except Exception as e:
+        raise RuntimeError(f"Board recognition rejected: {e}") from e
+
+    if not test_board.board.is_valid():
+        raise RuntimeError("Recognized board is not a valid chess position.")
+
+    return test_board
+
 
 def main():
     is_moving = False
@@ -111,39 +147,74 @@ def main():
                 if is_moving and (time.time() - last_motion_time) > DELAY:
                     print("[INFO] Analyzing movement ...")
 
-                    squares = split_board(board_img)
-                    cnn_state = []
+                    recognized_board = None
 
-                    for sq, img in squares.items():
-                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        cls = cnn.predict(img)
-                        cnn_state.append(cls//2)
-                    print(cnn_state)
-                    try:
-                        chess_board.apply_map(cnn_state)
-                        if chess_board.board.is_valid():
-                            print("[INFO] The position is correct.")
-                            if chess_board.board.turn == chess.BLACK:
-                                comp_turn = True
-                        else:
-                            print("[ERROR] Invalid board position.")
-                    except ValueError:
-                        print("[ERROR] Malformed FEN.")
+                    for trial in range(MAX_BOARD_READ_TRIALS):
+                        print(f"[INFO] Board recognition attempt {trial + 1}/{MAX_BOARD_READ_TRIALS}")
+
+                        try:
+                            recognized_board = read_board_from_camera(camera, aruco, cnn, chess_board)
+                            print("[INFO] Board recognized successfully.")
+                            break
+                        except Exception as e:
+                            print(f"[WARN] {e}")
+
+                    if recognized_board is None:
+                        print("[ERROR] Failed to recognize a valid chessboard after 100 attempts.")
+                        break
+
+                    chess_board = recognized_board
+
+                    if chess_board.board.turn == chess.BLACK:
+                        comp_turn = True
 
                     is_moving = False
 
             if comp_turn:
                 move = stockfish.get_move(chess_board.board)
                 print("[Stockfish] move:", move)
+                chess_board.show_board(last_move=move)
 
                 if move is not None:
-                    chess_board.push(move)
+                    expected_board = chess_board.copy()
+                    expected_board.push(move)
+
+                    '''
+                    print("[INFO] Waiting for a robot to make a move.")
+            
+                    robot.move(move)
+                    '''
+                    time.sleep(4)
+                    detected_board = None
+
+                    for trial in range(MAX_BOARD_READ_TRIALS):
+                        print(f"[INFO] Board recognition attempt {trial + 1}/{MAX_BOARD_READ_TRIALS}")
+
+                        try:
+                            detected_board = read_board_from_camera(camera, aruco, cnn, chess_board)
+                            print("[INFO] Board recognized successfully.")
+                            break
+                        except Exception as e:
+                            print(f"[WARN] {e}")
+
+                    if detected_board is None:
+                        print("[ERROR] Failed to recognize a valid chessboard after 100 attempts.")
+                        break
+
+                    if detected_board.board == expected_board.board:
+                        chess_board = expected_board
+                        print("[INFO] Robot move verified.")
+                    else:
+                        print("[ERROR] Physical board does not match expected move.")
+
                     last_move = move
 
                 comp_turn = False
 
-
-        print("[INFO] Game over.")
+        game_over, result, reason = chess_board.check_game_over()
+        print("[GAME OVER]")
+        print(reason)
+        print(f"[RESULT] {result}")
     finally:
         camera.cap.release()
         cv2.destroyAllWindows()
