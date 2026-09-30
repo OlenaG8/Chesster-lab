@@ -2,6 +2,15 @@ import cv2
 import numpy as np
 
 
+def get_square_size(corners, size=800, grid_divisions=8):
+    ideal_corners = np.array([[0, 0], [size, 0], [size, size], [0, size]], dtype="float32")
+    image_corners = np.array([c[0][0] for c in corners], dtype="float32")
+
+    matrix = cv2.getPerspectiveTransform(ideal_corners, image_corners)
+    square_size = size // grid_divisions
+    return matrix, square_size
+
+
 class ArucoDetector:
     def __init__(self, dict_type=cv2.aruco.DICT_4X4_250):
         self.dictionary = cv2.aruco.getPredefinedDictionary(dict_type)
@@ -9,7 +18,7 @@ class ArucoDetector:
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.parameters)
 
     def detect(self, frame):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         corners, ids, _ = self.detector.detectMarkers(gray)
 
         if ids is not None and len(ids) == 4:
@@ -18,11 +27,8 @@ class ArucoDetector:
         return None, None
 
     def draw_grid(self, frame, sorted_corners, size=800, grid_divisions=8):
-        ideal_corners = np.array([[0, 0], [size, 0], [size, size], [0, size]], dtype="float32")
-        image_corners = np.array([c[0][0] for c in sorted_corners], dtype="float32")
+        matrix, step = get_square_size(sorted_corners, size, grid_divisions)
 
-        matrix = cv2.getPerspectiveTransform(ideal_corners, image_corners)
-        step = size // grid_divisions
         lines_points = []
 
         for i in range(grid_divisions + 1):
@@ -41,9 +47,7 @@ class ArucoDetector:
         cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
     def generate_marker(self, marker_id, output_path, size=200):
-        marker_image = cv2.aruco.generateImageMarker(
-            self.dictionary, marker_id, size
-        )
+        marker_image = cv2.aruco.generateImageMarker(self.dictionary, marker_id, size)
         cv2.imwrite(output_path, marker_image)
 
 
