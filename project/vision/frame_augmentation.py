@@ -12,7 +12,7 @@ class AugmentFrame:
         self.matrix = None
         self.square_size = None
 
-    def highlight_move(self, move, size=800):
+    def highlight_move(self, move: chess.Move, size=800):
         self.matrix, self.square_size = get_square_size(self.corners, size, 8)
 
         self.frame = self.highlight_square(move.from_square, (50, 100, 255))
@@ -20,20 +20,22 @@ class AugmentFrame:
 
         return self.frame
 
-    def highlight_square(self, square, color):
+    def highlight_square(self, square: chess.Square, color):
         points = self.square_to_points(square)
-        points = self.transform_points(points)
+        transformed_points = cv2.perspectiveTransform(points, self.matrix)
 
         img_copy = self.frame.copy()
         overlay = img_copy.copy()
 
-        cv2.rectangle(overlay, tuple(points[0]), tuple(points[1]), color, thickness=-1)
+        pt1 = tuple(transformed_points[0][0].astype(int))
+        pt2 = tuple(transformed_points[1][0].astype(int))
+        cv2.rectangle(overlay, pt1, pt2, color, thickness=-1)
 
         alpha = 0.6
         img_new = cv2.addWeighted(overlay, alpha, img_copy, 1 - alpha, 0)
         return img_new
 
-    def square_to_points(self, square):
+    def square_to_points(self, square: chess.Square):
         file = chess.square_file(square)
         rank = chess.square_rank(square)
 
@@ -43,10 +45,4 @@ class AugmentFrame:
         x2 = x1 + self.square_size
         y2 = y1 + self.square_size
 
-        return np.array([[x1, y1], [x2, y2]], dtype="float32")
-
-    def transform_points(self, points):
-        points = points.reshape(-1, 1, 2)
-        inv_matrix = np.linalg.inv(self.matrix)
-        transformed = cv2.perspectiveTransform(points, inv_matrix)
-        return transformed.reshape(-1, 2).astype(int)
+        return np.array([[[x1, y1]], [[x2, y2]]], dtype="float32")
