@@ -20,6 +20,7 @@ class Camera:
         if (self.map1 is not None) and (self.map2 is not None):
             frame = cv2.remap(frame, self.map1, self.map2, cv2.INTER_LINEAR)
 
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return frame
 
     def release(self):
