@@ -71,7 +71,6 @@ def read_board_from_camera(camera, aruco, cnn, chess_board):
     cnn_state = []
 
     for sq, img in squares.items():
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         cls = cnn.predict(img)
         cnn_state.append(cls // 2)
 
@@ -116,6 +115,8 @@ def main():
             if frame is None:
                 continue
 
+            cv2.imwrite(f"debug_main.jpg", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
@@ -131,10 +132,10 @@ def main():
 
             frame_copy = frame.copy()
             aruco.draw_grid(frame_copy, corners)
-            cv2.imshow("Preview", frame_copy)
+            cv2.imshow("Preview", cv2.cvtColor(frame_copy, cv2.COLOR_BGR2RGB))
 
             board_img = warp_board(frame, corners)
-            cv2.imshow("Chessboard", board_img)
+            cv2.imshow("Chessboard", cv2.cvtColor(board_img, cv2.COLOR_BGR2RGB))
             chess_board.show_board(last_move=last_move)
 
             fg_mask = bg_subtractor.apply(board_img)
