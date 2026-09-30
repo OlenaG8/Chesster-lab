@@ -14,7 +14,6 @@ env/
 # =========================
 # LeRobot, Data & ML Models
 # =========================
-lerobot/
 outputs/
 data/
 datasets/
