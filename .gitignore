@@ -10,6 +10,8 @@ __pycache__/
 venv/
 env/
 *.jpg
+pyproject.toml
+chesster_project.egg-info
 
 # =========================
 # LeRobot, Data & ML Models
